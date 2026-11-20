@@ -1,0 +1,75 @@
+{
+  "limit": 48,
+  "cases": [
+    {
+      "id": "late-earlier",
+      "observations": [
+        {"head": "left", "tick": 10, "kind": "reading", "raw_code": 48},
+        {"head": "right", "tick": 11, "kind": "reading", "raw_code": 61}
+      ],
+      "steps": [
+        {"deliver": [[1, "raw"], [1, "evidence"], [0, "evidence"]], "expect": null},
+        {"deliver": [[0, "raw"]], "fail_once": true, "expect": {"head": "left", "tick": 10, "raw_code": 48, "grade": "pass"}}
+      ]
+    },
+    {
+      "id": "tie-late",
+      "observations": [
+        {"head": "right", "tick": 10, "kind": "reading", "raw_code": 61},
+        {"head": "left", "tick": 10, "kind": "reading", "raw_code": 48}
+      ],
+      "steps": [
+        {"deliver": [[0, "raw"], [0, "evidence"]], "expect": null},
+        {"deliver": [[1, "evidence"]], "expect": null},
+        {"deliver": [[1, "raw"]], "expect": {"head": "left", "tick": 10, "raw_code": 48, "grade": "pass"}}
+      ]
+    },
+    {
+      "id": "tie-empty",
+      "observations": [
+        {"head": "right", "tick": 10, "kind": "reading", "raw_code": 61},
+        {"head": "left", "tick": 10, "kind": "empty"}
+      ],
+      "steps": [
+        {"deliver": [[0, "raw"], [0, "evidence"]], "expect": null},
+        {"deliver": [[1, "evidence"]], "expect": {"head": "right", "tick": 10, "raw_code": 61, "grade": "over_limit"}}
+      ]
+    },
+    {
+      "id": "left-before-right-tie",
+      "observations": [
+        {"head": "left", "tick": 10, "kind": "reading", "raw_code": 48},
+        {"head": "right", "tick": 9, "kind": "empty"}
+      ],
+      "steps": [
+        {"deliver": [[0, "raw"], [0, "evidence"]], "expect": null},
+        {"deliver": [[1, "evidence"]], "expect": {"head": "left", "tick": 10, "raw_code": 48, "grade": "pass"}}
+      ]
+    },
+    {
+      "id": "ended-delayed",
+      "observations": [
+        {"head": "left", "tick": 10, "kind": "reading", "raw_code": 0},
+        {"head": "left", "tick": 10, "kind": "end"},
+        {"head": "right", "tick": 9, "kind": "end"}
+      ],
+      "steps": [
+        {"deliver": [[1, "evidence"], [2, "evidence"], [0, "evidence"]], "expect": null},
+        {"deliver": [[0, "raw"]], "expect": {"head": "left", "tick": 10, "raw_code": 0, "grade": "pass"}}
+      ]
+    },
+    {
+      "id": "both-empty",
+      "observations": [
+        {"head": "left", "tick": 9, "kind": "empty"},
+        {"head": "right", "tick": 9, "kind": "empty"},
+        {"head": "left", "tick": 10, "kind": "end"},
+        {"head": "right", "tick": 10, "kind": "end"}
+      ],
+      "steps": [
+        {"deliver": [[0, "evidence"], [1, "evidence"], [2, "evidence"]], "expect": null},
+        {"deliver": [[3, "evidence"]], "expect": {"grade": "missing"}}
+      ]
+    }
+  ]
+}
