@@ -14,7 +14,7 @@ python3 -B check_project.py
 
 ```sh
 python3 -B -m unittest discover -s tests -t . -v
-python3 -B -m station.rounds.workstation demo examples/shift.json examples/retry.json
+python3 -B -m station.rounds.workstation demo examples/shift.json examples/retry.json examples/dual.json
 ```
 
 `demo` 为每份脚本使用独立临时库，经过发令、实收和封轮后关闭原连接，再从同一数据库领取。它核对脚本中的手算期望并输出班账号和样本回执。未预期错误和样例差异返回非零退出码。
@@ -38,6 +38,25 @@ python3 -B -m station.rounds.workstation round shift.sqlite3 round:shift-01
 6. `station.lookup.sample.get_sample(conn, receipt_number)` 返回原判级、原码、物理拍、原触发和读单。`station.lookup.round.get_round(conn, report_number)` 返回原班账和固定逐片结论。领取只需要数据库连接。
 
 用 `station.rounds.workstation.initialize_station(conn)` 初始化可写连接。公开写入口负责各自提交，领取在同一读取事务内核对相关引用。调用公开入口时连接应无活动事务。输入冲突或不合法操作报 `ValueError`，未知号报 `KeyError`，损坏的领取引用报 `ReferenceIntegrityError`，SQLite 写入及提交错误向调用方报告。
+
+## 双头首读
+
+双头班轮沿用同一清册、授权和严格超限口径，两个读头共用同一触发号，头位为 `left` 或 `right`。
+
+1. `station.rounds.opening.open(conn, round_id, roster, limit, *, mode="dual")` 以双头模式开轮，模式随开轮冻结，同号异参拒绝。
+2. `station.device.trigger.trigger` 签名照旧，双头同参复投沿用原触发。
+3. `station.device.optical.observe_dual(conn, exposure, observation)` 按头推进源序观察，返回本次产生的消息。每个 `reading` 首处理时产生可独立递送的原包（`kind="raw"`，含 `head`、`tick`、`raw_code`），每次观察另产生证据消息（`kind="evidence"`，含 `head`、`through`、`event` 和已读出的 `reading_ticks`；证据只标出有原读的拍以区分空拍与在途原包，不含原码）。`end` 可紧随同拍观察，已出样的原包仍可在途。错绑、倒序或同身份内容冲突拒绝，重投不增加物理动作。
+4. `station.intake.accept.accept_dual(conn, order_id, message, *, before_commit=None)` 递交原包或证据。尚待证返回 `None`；具备原包与资格证据时直接签发 `AcceptanceResult`；两头已证结束且无有效原读时返回 `missing` 结论且 `receipt` 为空。首读按最早物理拍，同拍左先；左侧候选只须排除右侧更早原读，右侧候选还须排除左侧同拍原读。证据不能充作原包，仅头推进或结束不能把在途原包当空拍。错绑或内容冲突报 `ValueError`，未知读单报 `KeyError`。证据齐备即签，即使另一头仍在运行；迟到的非胜出件不能改写已签成果。
+5. 签发一次提交结论、采用的原件引用和首执。`before_commit` 在新结论提交前调用；失败不留新结果或回执，已接纳事实保持可用，重投同一消息即可续办。
+6. `station.lookup.sample.get_sample` 对双头样本另返回实际胜出的 `head`。待证成员仍在办，已签首读或已确认缺样才入班账。停源重开同一站库后仍按原回执领取。
+
+单头入口（`apply_observation`、`accept`）及其既有成果照旧，且不得用于绕过双头资格。
+
+## 双头手算样例
+
+`examples/dual.json` 的清册是 L、M，上限 48，双头模式。L 右头第 11 拍读 61，左头第 10 拍读 48。送达次序先给右 11 的原包和证据，接着推进 M，再给左 10 的证据；此时左头第 10 拍原包迟到，仍待证。左 10 原包到达后按左头第 10 拍签收，迟到的右 11 不改写成果。M 两头各只空拍后结束，取证齐备即判缺样、不发回执。封轮后停源重开，按原回执领取 L 的 `head="left"`、第 10 拍、原码 48。
+
+`examples/first_read.json` 的六个场景覆盖最早拍、同拍左先、同拍空拍、左先于右同拍、结束后迟到原包，以及两头结束无有效原读。`python3 -B check_first_read_fixture.py examples/first_read.json` 只核对原始观察和送达安排；回归 `tests/test_dual.py` 会按这些步骤递交消息并核对逐步期望，`late-earlier` 场景还验证失败后续办。
 
 ## 两份手算样例
 

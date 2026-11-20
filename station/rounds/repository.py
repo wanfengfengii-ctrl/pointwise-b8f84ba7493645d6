@@ -24,6 +24,11 @@ class RoundRecord:
     roster: Roster
     policy: LimitPolicy
     phase: str
+    mode: str = 'single'
+
+    @property
+    def is_dual(self) -> bool:
+        return self.mode == 'dual'
 
 
 @dataclass(frozen=True)
@@ -42,9 +47,15 @@ class RoundRepository:
             CREATE TABLE IF NOT EXISTS rounds (
                 round_id TEXT PRIMARY KEY NOT NULL,
                 limit_code TEXT NOT NULL,
-                phase TEXT NOT NULL CHECK (phase IN ('open', 'sealed'))
+                phase TEXT NOT NULL CHECK (phase IN ('open', 'sealed')),
+                mode TEXT NOT NULL DEFAULT 'single' CHECK (mode IN ('single', 'dual'))
             )
         ''')
+        columns = {row[1] for row in self.connection.execute('PRAGMA table_info(rounds)')}
+        if 'mode' not in columns:
+            self.connection.execute(
+                "ALTER TABLE rounds ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'"
+            )
         self.connection.execute('''
             CREATE TABLE IF NOT EXISTS roster (
                 round_id TEXT NOT NULL REFERENCES rounds(round_id),
@@ -66,16 +77,16 @@ class RoundRepository:
 
     def find_round(self, round_id: str) -> RoundRecord | None:
         row = self.connection.execute(
-            'SELECT limit_code, phase FROM rounds WHERE round_id = ?', (round_id,)
+            'SELECT limit_code, phase, mode FROM rounds WHERE round_id = ?', (round_id,)
         ).fetchone()
         if row is None:
             return None
-        limit_code, phase = row
+        limit_code, phase, mode = row
         pieces = self.connection.execute(
             'SELECT piece FROM roster WHERE round_id = ? ORDER BY position', (round_id,)
         )
         return RoundRecord(round_id, Roster(tuple(piece for piece, in pieces)),
-                           LimitPolicy(int(limit_code, 16)), phase)
+                           LimitPolicy(int(limit_code, 16)), phase, mode or 'single')
 
     def require_round(self, round_id: str) -> RoundRecord:
         round_record = self.find_round(round_id)
@@ -83,16 +94,17 @@ class RoundRepository:
             raise KeyError(f'unknown round {round_id!r}')
         return round_record
 
-    def insert_round(self, round_id: str, roster: Roster, policy: LimitPolicy) -> RoundRecord:
+    def insert_round(self, round_id: str, roster: Roster, policy: LimitPolicy,
+                     mode: str = 'single') -> RoundRecord:
         self.connection.execute(
-            'INSERT INTO rounds (round_id, limit_code, phase) VALUES (?, ?, ?)',
-            (round_id, hex(policy.limit), 'open'),
+            'INSERT INTO rounds (round_id, limit_code, phase, mode) VALUES (?, ?, ?, ?)',
+            (round_id, hex(policy.limit), 'open', mode),
         )
         self.connection.executemany(
             'INSERT INTO roster (round_id, position, piece) VALUES (?, ?, ?)',
             ((round_id, position, piece) for position, piece in enumerate(roster.pieces)),
         )
-        return RoundRecord(round_id, roster, policy, 'open')
+        return RoundRecord(round_id, roster, policy, 'open', mode)
 
     def find_order(self, order_id: str) -> ReadOrder | None:
         row = self.connection.execute(

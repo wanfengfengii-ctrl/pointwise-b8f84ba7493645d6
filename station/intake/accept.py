@@ -7,7 +7,7 @@ from station.intake.binding import verify_terminal
 from station.intake.grading import Grade, grade_terminal
 from station.intake.receipt import ReceiptStore, SampleReceipt
 from station.intake.repository import IntakeRepository, PieceConclusion
-from station.rounds.repository import transaction
+from station.rounds.repository import RoundRepository, transaction
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,8 @@ def accept(connection: sqlite3.Connection, order_id: str, terminal: Terminal, *,
     with transaction(connection, write=True):
         verified = verify_terminal(connection, order_id, terminal)
         original = verified.terminal
+        if RoundRepository(connection).require_round(original.round_id).is_dual:
+            raise ValueError('single-head intake cannot serve a dual-mode round')
         existing = intake.find_for_piece(original.round_id, original.piece)
         if existing is not None:
             return _replay(existing, original, receipts)

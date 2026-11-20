@@ -95,3 +95,14 @@ class IntakeRepository:
         if isinstance(original, RawReading):
             return SourceTrace(*binding, original.tick, original.raw_code)
         return SourceTrace(*binding, None, None)
+
+    def winning_head(self, conclusion: PieceConclusion) -> str | None:
+        if self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dual_conclusions'"
+        ).fetchone() is None:
+            return None
+        row = self.connection.execute(
+            'SELECT head FROM dual_conclusions WHERE conclusion_id = ?',
+            (conclusion.conclusion_id,),
+        ).fetchone()
+        return None if row is None else row[0]

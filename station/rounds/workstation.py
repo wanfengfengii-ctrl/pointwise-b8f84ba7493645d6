@@ -8,12 +8,14 @@ from tempfile import TemporaryDirectory
 
 from station.closing.repository import ClosingRepository
 from station.closing.seal import close
+from station.device.dual import DualRecorder, observe_dual
 from station.device.fixture import (DeliverySchedule, FailOnceBeforeCommit, InjectedCommitFailure,
-                                    ScenarioFixture, load_fixture)
+                                    OpticalObservation, ScenarioFixture, load_fixture)
 from station.device.optical import apply_observation
 from station.device.recording import DeviceRecording
 from station.device.trigger import trigger
 from station.intake.accept import accept
+from station.intake.dual import DualIntakeRepository, accept_dual
 from station.intake.receipt import ReceiptStore
 from station.intake.repository import IntakeRepository
 from station.lookup.round import get_round
@@ -30,7 +32,9 @@ def initialize_station(connection: sqlite3.Connection) -> None:
     with transaction(connection, write=True):
         RoundRepository(connection).initialize()
         DeviceRecording(connection).initialize()
+        DualRecorder(connection).initialize()
         IntakeRepository(connection).initialize()
+        DualIntakeRepository(connection).initialize()
         ReceiptStore(connection).initialize()
         ClosingRepository(connection).initialize()
 
@@ -151,6 +155,107 @@ def run_scenario(database: str | Path, fixture_path: str | Path) -> dict:
     return result
 
 
+def _dual_groups(messages):
+    grouped = {'raw': [], 'evidence': []}
+    for message in messages:
+        grouped[message['kind']].append(message)
+    return grouped
+
+
+def _reopen_dual_archive(database: str | Path, report, receipts: dict[str, str]) -> dict:
+    with closing(sqlite3.connect(database)) as offline:
+        reloaded = get_round(offline, report.number)
+        if reloaded != report:
+            raise RuntimeError('reopened report differs from the sealed result')
+        samples = {}
+        for entry in reloaded.conclusions:
+            if entry.piece not in receipts:
+                continue
+            sample = get_sample(offline, receipts[entry.piece])
+            if (sample.round_id, sample.piece, sample.order_id, sample.trigger_id,
+                sample.source_id, sample.grade) != (
+                    entry.round_id, entry.piece, entry.order_id, entry.trigger_id,
+                    entry.source_id, entry.grade):
+                raise RuntimeError('reopened sample differs from its sealed conclusion')
+            if sample.head not in ('left', 'right'):
+                raise RuntimeError('reopened dual sample lacks its winning head')
+            samples[entry.piece] = {'head': sample.head, 'trigger_id': sample.trigger_id,
+                                    'tick': sample.tick, 'raw_code': sample.raw_code,
+                                    'grade': sample.grade.value}
+        return {
+            'pieces': [[entry.piece, entry.grade.value] for entry in reloaded.conclusions],
+            'counts': asdict(reloaded.counts),
+            'samples': samples,
+        }
+
+
+def run_dual_scenario(database: str | Path, fixture_path: str | Path) -> dict:
+    with Path(fixture_path).open(encoding='utf-8') as source:
+        script = json.load(source)
+    with closing(sqlite3.connect(database)) as connection:
+        initialize_station(connection)
+        if RoundRepository(connection).find_round(script['round_id']) is not None:
+            raise ValueError('scenario run requires an unused round ID')
+        open(connection, script['round_id'], script['roster'], script['limit'],
+             mode=script.get('mode', 'dual'))
+        produced = {}
+        for entry in script['pieces']:
+            authorize_read(connection, script['round_id'], entry['piece'], entry['order_id'])
+            exposure = trigger(connection, script['round_id'], entry['piece'], entry['order_id'])
+            groups = []
+            for row in entry['observations']:
+                observation = OpticalObservation(**row)
+                groups.append(_dual_groups(observe_dual(connection, exposure, observation)))
+            produced[entry['piece']] = groups
+        arrivals = []
+        receipts = {}
+        for step, delivery in enumerate(script['deliveries'], 1):
+            piece = delivery['piece']
+            message = produced[piece][delivery['observation']][delivery['channel']][0]
+            result = accept_dual(connection, f"{script['round_id']}/{piece}", message)
+            signed = None if result is None or result.receipt is None else result.receipt.number
+            if signed is not None:
+                receipts.setdefault(piece, signed)
+            arrivals.append({'piece': piece, 'channel': delivery['channel'], 'receipt': signed})
+            expected = script['expected']['deliveries'][step - 1]
+            if expected != arrivals[-1]:
+                raise RuntimeError(f'{script["case_id"]}: delivery {step} expected '
+                                   f'{expected!r}; got {arrivals[-1]!r}')
+        report = close(connection, script['round_id']).report
+        if report is None:
+            raise RuntimeError('round still pending after all scripted deliveries')
+    archive = _reopen_dual_archive(database, report, receipts)
+    actual = {'deliveries': arrivals, 'archive': archive}
+    if actual != script['expected']:
+        raise RuntimeError(f'{script["case_id"]}: expected {script["expected"]!r}; got {actual!r}')
+    evidence = {
+        'case_id': script['case_id'],
+        'input': {'round_id': script['round_id'], 'roster': script['roster'],
+                  'limit': script['limit'], 'mode': script.get('mode', 'dual'),
+                  'pieces': script['pieces'], 'deliveries': script['deliveries']},
+        'expected': script['expected'],
+        'actual': actual,
+        'code_paths': ['station/device/dual.py', 'station/intake/dual.py',
+                       'station/intake/grading.py', 'station/closing/seal.py',
+                       'station/lookup/sample.py'],
+        'oracle': 'Hand-calculated dual-head delivery order: earliest physical tick, left head on ties, '
+                  'no receipt while only a later right read is proven.',
+    }
+    print('POINTWISE_SCENARIO ' + json.dumps(evidence, sort_keys=True))
+    result = {'report': report.number, 'receipts': receipts,
+              'arrivals': arrivals}
+    print(json.dumps(result, sort_keys=True))
+    return result
+
+
+def run_any_scenario(database: str | Path, fixture_path: str | Path):
+    with Path(fixture_path).open(encoding='utf-8') as source:
+        script = json.load(source)
+    if 'mode' in script or 'pieces' in script:
+        return run_dual_scenario(database, fixture_path)
+    return run_scenario(database, fixture_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Run or audit the optical inspection station')
     actions = parser.add_subparsers(dest='action', required=True)
@@ -168,9 +273,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == 'demo':
         for fixture in args.fixtures:
             with TemporaryDirectory(prefix='optical-station-') as directory:
-                run_scenario(Path(directory) / 'station.sqlite3', fixture)
+                run_any_scenario(Path(directory) / 'station.sqlite3', fixture)
     elif args.action == 'run':
-        run_scenario(args.database, args.fixture)
+        run_any_scenario(args.database, args.fixture)
     elif args.action == 'init':
         with closing(sqlite3.connect(args.database)) as connection:
             initialize_station(connection)

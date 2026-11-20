@@ -21,6 +21,7 @@ class SampleResult:
     tick: int
     raw_code: int
     grade: Grade
+    head: str | None = None
 
 
 def get_sample(connection: sqlite3.Connection, receipt_number: str) -> SampleResult:
@@ -32,6 +33,7 @@ def get_sample(connection: sqlite3.Connection, receipt_number: str) -> SampleRes
         intake = IntakeRepository(connection)
         conclusion = verify_receipt_link(receipt, intake.get_conclusion(receipt.conclusion_id))
         source = load_provenance(intake, conclusion)
+        head = intake.winning_head(conclusion)
         return SampleResult(receipt.number, conclusion.round_id, conclusion.piece, conclusion.order_id,
                             source.source_id, source.trigger_id, source.tick, source.raw_code,
-                            conclusion.grade)
+                            conclusion.grade, head)

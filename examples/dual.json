@@ -1,0 +1,48 @@
+{
+  "case_id": "dual-v1",
+  "round_id": "dual-01",
+  "roster": ["L", "M"],
+  "limit": 48,
+  "mode": "dual",
+  "pieces": [
+    {"piece": "L", "order_id": "dual-01/L", "observations": [
+      {"head": "right", "tick": 11, "kind": "reading", "raw_code": 61},
+      {"head": "left", "tick": 10, "kind": "reading", "raw_code": 48}
+    ]},
+    {"piece": "M", "order_id": "dual-01/M", "observations": [
+      {"head": "left", "tick": 9, "kind": "empty"},
+      {"head": "right", "tick": 9, "kind": "empty"},
+      {"head": "left", "tick": 10, "kind": "end"},
+      {"head": "right", "tick": 10, "kind": "end"}
+    ]}
+  ],
+  "deliveries": [
+    {"piece": "L", "observation": 0, "channel": "raw"},
+    {"piece": "L", "observation": 0, "channel": "evidence"},
+    {"piece": "M", "observation": 0, "channel": "evidence"},
+    {"piece": "M", "observation": 1, "channel": "evidence"},
+    {"piece": "M", "observation": 2, "channel": "evidence"},
+    {"piece": "L", "observation": 1, "channel": "evidence"},
+    {"piece": "L", "observation": 1, "channel": "raw"},
+    {"piece": "M", "observation": 3, "channel": "evidence"}
+  ],
+  "expected": {
+    "deliveries": [
+      {"piece": "L", "channel": "raw", "receipt": null},
+      {"piece": "L", "channel": "evidence", "receipt": null},
+      {"piece": "M", "channel": "evidence", "receipt": null},
+      {"piece": "M", "channel": "evidence", "receipt": null},
+      {"piece": "M", "channel": "evidence", "receipt": null},
+      {"piece": "L", "channel": "evidence", "receipt": null},
+      {"piece": "L", "channel": "raw", "receipt": "sample:1"},
+      {"piece": "M", "channel": "evidence", "receipt": null}
+    ],
+    "archive": {
+      "pieces": [["L", "pass"], ["M", "missing"]],
+      "counts": {"passed": 1, "over_limit": 0, "missing": 1},
+      "samples": {
+        "L": {"head": "left", "trigger_id": "trigger:dual-01/L", "tick": 10, "raw_code": 48, "grade": "pass"}
+      }
+    }
+  }
+}

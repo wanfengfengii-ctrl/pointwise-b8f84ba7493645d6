@@ -3,7 +3,7 @@ import sqlite3
 from station.device.fixture import OpticalObservation
 from station.device.recording import DeviceRecording, ExposureRecord
 from station.device.terminal import ConfirmedMissing, RawReading, Terminal
-from station.rounds.repository import transaction
+from station.rounds.repository import RoundRepository, transaction
 
 
 def apply_observation(connection: sqlite3.Connection, exposure: ExposureRecord,
@@ -14,6 +14,9 @@ def apply_observation(connection: sqlite3.Connection, exposure: ExposureRecord,
         recordings = DeviceRecording(connection)
         if recordings.find_exposure(exposure.order_id) != exposure:
             raise ValueError('observation targets an unknown or conflicting exposure')
+        active = RoundRepository(connection).require_round(exposure.round_id)
+        if active.is_dual:
+            raise ValueError('single-head observations cannot serve a dual-mode round')
         if observation.kind == 'empty':
             return None
         binding = (f'original:{exposure.trigger_id}', exposure.round_id, exposure.piece,
